@@ -8,10 +8,10 @@ import math
 from typing import Dict, Optional
 
 
-@dataclass(frozen=True)
 class RateLimitResult:
     """
     Result of a rate limit check.
+    Uses __slots__ for maximum throughput and minimal memory overhead.
     
     Attributes:
         allowed: True if the request is permitted, False if rate limited.
@@ -20,24 +20,54 @@ class RateLimitResult:
         reset_after: Seconds until the rate limit quota fully resets/refills to max capacity.
         limit: The maximum limit configured for this bucket/window.
     """
-    allowed: bool
-    remaining: float
-    retry_after: float
-    reset_after: float
-    limit: float
+    __slots__ = ("allowed", "remaining", "retry_after", "reset_after", "limit")
+
+    def __init__(
+        self,
+        allowed: bool,
+        remaining: float,
+        retry_after: float,
+        reset_after: float,
+        limit: float,
+    ):
+        self.allowed = allowed
+        self.remaining = remaining
+        self.retry_after = retry_after
+        self.reset_after = reset_after
+        self.limit = limit
+
+    def __repr__(self) -> str:
+        return (
+            f"RateLimitResult(allowed={self.allowed}, remaining={self.remaining}, "
+            f"retry_after={self.retry_after}, reset_after={self.reset_after}, limit={self.limit})"
+        )
+
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, RateLimitResult):
+            return False
+        return (
+            self.allowed == other.allowed
+            and self.remaining == other.remaining
+            and self.retry_after == other.retry_after
+            and self.reset_after == other.reset_after
+            and self.limit == other.limit
+        )
 
     def to_headers(self) -> Dict[str, str]:
         """
         Generate standard HTTP rate limiting headers for API gateways.
         Compatible with RFC 6585 (429 Too Many Requests) and common gateway conventions.
         """
+        rem_int = int(self.remaining)
+        reset_int = math.ceil(self.reset_after)
         headers = {
             "X-RateLimit-Limit": str(int(self.limit)),
-            "X-RateLimit-Remaining": str(max(0, int(self.remaining))),
-            "X-RateLimit-Reset": str(max(0, math.ceil(self.reset_after))),
+            "X-RateLimit-Remaining": str(rem_int if rem_int > 0 else 0),
+            "X-RateLimit-Reset": str(reset_int if reset_int > 0 else 0),
         }
         if not self.allowed:
-            headers["Retry-After"] = str(max(1, math.ceil(self.retry_after)))
+            retry_int = math.ceil(self.retry_after)
+            headers["Retry-After"] = str(retry_int if retry_int > 1 else 1)
         return headers
 
 

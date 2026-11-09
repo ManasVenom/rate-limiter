@@ -1,27 +1,27 @@
 """
-API Views for Django Server.
+High-Performance API Views for Django Server.
+Pre-encodes static JSON payloads into UTF-8 bytes to maximize throughput.
 """
 
-from django.http import HttpRequest, JsonResponse
+from django.http import HttpRequest, HttpResponse
+
+_PING_PAYLOAD = b'{"status": "ok", "message": "pong"}'
+_DATA_PAYLOAD = (
+    b'{"status": "success", "data": {"service": "order-gateway", "version": "1.0.0", "items_count": 42}}'
+)
+_HEALTH_PAYLOAD = b'{"status": "healthy"}'
 
 
-def ping_view(request: HttpRequest) -> JsonResponse:
+def ping_view(request: HttpRequest) -> HttpResponse:
     """Lightweight endpoint to test request throughput."""
-    return JsonResponse({"status": "ok", "message": "pong"})
+    return HttpResponse(_PING_PAYLOAD, content_type="application/json")
 
 
-def data_view(request: HttpRequest) -> JsonResponse:
+def data_view(request: HttpRequest) -> HttpResponse:
     """Simulated API data endpoint."""
-    return JsonResponse({
-        "status": "success",
-        "data": {
-            "service": "order-gateway",
-            "version": "1.0.0",
-            "items_count": 42,
-        }
-    })
+    return HttpResponse(_DATA_PAYLOAD, content_type="application/json")
 
 
-def health_view(request: HttpRequest) -> JsonResponse:
+def health_view(request: HttpRequest) -> HttpResponse:
     """Exempt health check endpoint."""
-    return JsonResponse({"status": "healthy"})
+    return HttpResponse(_HEALTH_PAYLOAD, content_type="application/json")

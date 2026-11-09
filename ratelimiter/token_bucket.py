@@ -10,10 +10,12 @@ from typing import Callable, Dict, Optional
 from ratelimiter.base import BaseRateLimiter, RateLimitResult
 
 
-@dataclass
 class _BucketState:
-    tokens: float
-    last_refill: float
+    __slots__ = ("tokens", "last_refill")
+
+    def __init__(self, tokens: float, last_refill: float):
+        self.tokens = tokens
+        self.last_refill = last_refill
 
 
 class TokenBucketLimiter(BaseRateLimiter):
@@ -50,6 +52,7 @@ class TokenBucketLimiter(BaseRateLimiter):
 
         self.capacity = float(capacity)
         self.refill_rate = float(refill_rate)
+        self._inv_refill_rate = 1.0 / self.refill_rate
         self.clock = clock or time.monotonic
         
         self._buckets: Dict[str, _BucketState] = {}
@@ -58,6 +61,7 @@ class TokenBucketLimiter(BaseRateLimiter):
     def acquire(self, key: str, tokens: int = 1) -> RateLimitResult:
         """
         Attempt to consume `tokens` from the bucket associated with `key`.
+        Optimized with in-place state mutation and zero garbage allocation on existing keys.
         """
         if tokens <= 0:
             raise ValueError(f"tokens to acquire must be positive, got {tokens}")
@@ -77,19 +81,24 @@ class TokenBucketLimiter(BaseRateLimiter):
             state = self._buckets.get(key)
 
             if state is None:
-                # First time this key is seen; bucket starts full
+                # First time key is seen; starts full and instantiate slotted state once
                 current_tokens = self.capacity
+                state = _BucketState(current_tokens, now)
+                self._buckets[key] = state
             else:
-                elapsed = max(0.0, now - state.last_refill)
-                refill_amount = elapsed * self.refill_rate
-                current_tokens = min(self.capacity, state.tokens + refill_amount)
+                elapsed = now - state.last_refill
+                if elapsed > 0.0:
+                    current_tokens = min(self.capacity, state.tokens + (elapsed * self.refill_rate))
+                else:
+                    current_tokens = state.tokens
 
             if current_tokens >= tokens:
                 new_tokens = current_tokens - tokens
-                self._buckets[key] = _BucketState(tokens=new_tokens, last_refill=now)
+                state.tokens = new_tokens
+                state.last_refill = now
 
                 # Reset time: time until bucket returns to full capacity
-                reset_after = (self.capacity - new_tokens) / self.refill_rate
+                reset_after = (self.capacity - new_tokens) * self._inv_refill_rate
                 return RateLimitResult(
                     allowed=True,
                     remaining=new_tokens,
@@ -99,12 +108,12 @@ class TokenBucketLimiter(BaseRateLimiter):
                 )
             else:
                 # Not enough tokens. Do not deduct tokens.
-                # Update bucket state to avoid losing accrued tokens since last refill.
-                self._buckets[key] = _BucketState(tokens=current_tokens, last_refill=now)
+                state.tokens = current_tokens
+                state.last_refill = now
 
                 deficit = tokens - current_tokens
-                retry_after = deficit / self.refill_rate
-                reset_after = (self.capacity - current_tokens) / self.refill_rate
+                retry_after = deficit * self._inv_refill_rate
+                reset_after = (self.capacity - current_tokens) * self._inv_refill_rate
 
                 return RateLimitResult(
                     allowed=False,

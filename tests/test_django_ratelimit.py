@@ -152,12 +152,51 @@ class TestDjangoRateLimiter(unittest.TestCase):
             f"p95={p95:.4f}ms, p99={p99:.4f}ms"
         )
 
+        # Assert throughput >= 10,000 req/s on single worker WSGI pipeline
+        self.assertGreaterEqual(
+            rps,
+            10_000,
+            f"Django single-worker throughput ({rps:,.0f} req/s) did not reach 10,000 req/s target!",
+        )
+
         # Assert sub-5ms latency across Django + Rate Limiter
         self.assertLess(
             p99,
             5.0,
             f"Django p99 latency ({p99:.4f}ms) exceeded 5.0ms target!",
         )
+
+    def test_django_asgi_dual_mode_support(self):
+        """Verify that RateLimitMiddleware works natively in asynchronous ASGI mode."""
+        import asyncio
+        from django.http import HttpResponse
+
+        limiter = TokenBucketLimiter(capacity=2, refill_rate=1.0)
+
+        async def dummy_async_view(request):
+            return HttpResponse(b"async ok", content_type="text/plain")
+
+        middleware = RateLimitMiddleware(dummy_async_view, limiter=limiter)
+        self.assertTrue(middleware._is_async)
+
+        async def run_requests():
+            req1 = self.factory.get("/api/ping", REMOTE_ADDR="192.168.1.88")
+            resp1 = await middleware(req1)
+            self.assertEqual(resp1.status_code, 200)
+            self.assertEqual(resp1.content, b"async ok")
+            self.assertEqual(resp1.headers["X-RateLimit-Remaining"], "1")
+
+            req2 = self.factory.get("/api/ping", REMOTE_ADDR="192.168.1.88")
+            resp2 = await middleware(req2)
+            self.assertEqual(resp2.status_code, 200)
+            self.assertEqual(resp2.headers["X-RateLimit-Remaining"], "0")
+
+            req3 = self.factory.get("/api/ping", REMOTE_ADDR="192.168.1.88")
+            resp3 = await middleware(req3)
+            self.assertEqual(resp3.status_code, 429)
+            self.assertIn("Retry-After", resp3.headers)
+
+        asyncio.run(run_requests())
 
     def test_django_wsgi_multiprocess_10k_throughput_and_sub_5ms_latency(self):
         """
