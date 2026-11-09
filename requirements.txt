@@ -1,0 +1,5 @@
+# Development and testing
+pytest>=8.0.0
+
+# Distributed Rate Limiting (for upcoming Redis integration)
+redis>=5.0.0
