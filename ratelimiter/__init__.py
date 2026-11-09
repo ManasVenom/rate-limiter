@@ -13,3 +13,9 @@ __all__ = [
     "TokenBucketLimiter",
     "rate_limit",
 ]
+
+try:
+    from ratelimiter.django_middleware import RateLimitMiddleware
+    __all__.append("RateLimitMiddleware")
+except ImportError:
+    pass
